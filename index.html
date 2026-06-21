@@ -26,6 +26,10 @@
             margin-bottom: 30px;
             border-radius: 8px;
             overflow: hidden;
+            min-height: 400px; /* Placeholder to prevent layout shift during lazy loading */
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
         .post-media {
             width: 100%;
@@ -68,51 +72,92 @@
     </div>
 
     <script>
-// ==========================================
-        //  CONFIG: YOUR WI-FI ADDRESS & USER DETAILS
+    // ==========================================
+        //  CONFIG: SECURE CLOUDFLARE QUICK TUNNEL
         // ==========================================
-        const JELLYFIN_URL = 'https://vapestone-feed.loca.lt'; 
+        const JELLYFIN_URL = 'https://dry-miracle-utility-quantum.trycloudflare.com'; 
         const USER_ID = '27ae5060aa9b4e11b34793be5a3ee891'; 
-        const API_KEY = '5a6bc86ec5cc4f2ebbbf811bda316712';
+        const API_KEY = '27ae5060aa9b4e11b34793be5a3ee891';
 
         let scrollInterval = null;
         let isScrolling = false;
         let stepAmount = 2; 
         let currentDelay = 30; 
+        let observer = null;
 
         async function loadFeed() {
             const feedContainer = document.getElementById('feed');
             feedContainer.innerHTML = '<p style="text-align:center; color:#aaa; margin-top:40px;">Fetching server library streams...</p>';
             
+            // Clean up old observer if reshuffling
+            if (observer) observer.disconnect();
+
             try {
-                const response = await fetch(`${JELLYFIN_URL}/Users/${USER_ID}/Items?IncludeItemTypes=Movie,Episode,Video,Photo&Recursive=true&Fields=MediaStreams&api_key=${API_KEY}`);
+                const response = await fetch(`${JELLYFIN_URL}/Users/${USER_ID}/Items?Recursive=true&Fields=MediaStreams&api_key=${API_KEY}`);
                 const data = await response.json();
                 
                 let items = data.Items || [];
-                // Shuffle array instantly for an aggressive random mix
-                items.sort(() => Math.random() - 0.5);
+                items.sort(() => Math.random() - 0.5); // Shuffle array
 
                 feedContainer.innerHTML = '';
+                setupIntersectionObserver();
 
                 items.forEach(item => {
                     const post = document.createElement('div');
                     post.className = 'post';
 
+                    // Check if it's a video asset
                     if (item.MediaType === 'Video') {
-                        // Transcodes .TS / mp4 formats natively via the stream pipeline
-                        post.innerHTML = `
-                            <video class="post-media" controls loop preload="metadata" muted>
-                                <source src="${JELLYFIN_URL}/Videos/${item.Id}/stream?static=false&api_key=${API_KEY}" type="video/mp4">
-                            </video>`;
-                    } else {
-                        // Images and Animated GIFs
-                        post.innerHTML = `<img class="post-media" src="${JELLYFIN_URL}/Items/${item.Id}/Images/Primary?api_key=${API_KEY}" alt="Media Asset" loading="lazy">`;
+                        // Fix for .TS / raw container profile mapping to guarantee cross-browser H.264 playback
+                        const videoSrc = `${JELLYFIN_URL}/Videos/${item.Id}/stream?Container=mp4&VideoCodec=h264&AudioCodec=aac&api_key=${API_KEY}`;
+                        post.innerHTML = `<video class="post-media" controls loop muted preload="none" data-src="${videoSrc}"></video>`;
+                    } 
+                    // Check specifically if the container file format is natively an animated GIF
+                    else if (item.Container && item.Container.toLowerCase() === 'gif') {
+                        const gifSrc = `${JELLYFIN_URL}/Videos/${item.Id}/stream?static=true&api_key=${API_KEY}`;
+                        post.innerHTML = `<img class="post-media" data-src="${gifSrc}" alt="Animated Asset">`;
+                    } 
+                    // Standard image files (JPG/PNG)
+                    else {
+                        const imgSrc = `${JELLYFIN_URL}/Items/${item.Id}/Images/Primary?api_key=${API_KEY}`;
+                        post.innerHTML = `<img class="post-media" data-src="${imgSrc}" alt="Media Asset">`;
                     }
+
                     feedContainer.appendChild(post);
+                    observer.observe(post);
                 });
             } catch (err) {
-                feedContainer.innerHTML = `<p style="text-align:center; color:#fa424b; padding:20px;">Connection Error: ${err.message}<br><span style="color:#aaa; font-size:12px;">Make sure you added the API key to line 61!</span></p>`;
+                feedContainer.innerHTML = `<p style="text-align:center; color:#fa424b; padding:20px;">Connection Error: ${err.message}</p>`;
             }
+        }
+
+        // Optimized Auto-Loading Engine using Intersection Observer
+        function setupIntersectionObserver() {
+            observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        const post = entry.target;
+                        const media = post.querySelector('video, img');
+                        
+                        if (media && media.dataset.src) {
+                            media.src = media.dataset.src;
+                            delete media.dataset.src; // Remove data-src attribute once loaded
+                            
+                            // Auto-play videos when they scroll into view
+                            if (media.tagName === 'VIDEO') {
+                                media.play().catch(() => {});
+                            }
+                        }
+                    } else {
+                        // Pause videos that roll off-screen to preserve CPU cycles
+                        const post = entry.target;
+                        const video = post.querySelector('video');
+                        if (video && !video.dataset.src) {
+                            video.pause();
+                        }
+                    }
+                });
+            }, { rootMargin: '300px 0px' }); // Pre-loads assets 300px before they hit view
         }
 
         function toggleAutoScroll() {
@@ -132,7 +177,7 @@
             }
         }
 
-        // VapeStone Hotkey Port Natively
+        // Hotkey bindings
         window.addEventListener('keydown', function (e) {
             if (e.key.toLowerCase() === 's') {
                 e.preventDefault();
